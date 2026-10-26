@@ -9,25 +9,34 @@
 --- [Documentação IA] ---
 
 @fileoverview Página de Perfil de Cliente Comum do sistema Conecta Serviços.
-@description Exibe os dados cadastrais do cliente comum, permitindo a edição de campos autorizados
-             (Nome, Email, Senha, Telefone e Endereço) e bloqueando estritamente os campos imutáveis
-             (CPF, Data de Nascimento, Data de Cadastro e Status da Conta).
+@description Exibe os dados cadastrais do cliente comum com atualização dinâmica de endereço
+             via CEP sem necessidade de botão, gerencia campos editáveis e imutáveis, e exibe
+             a relação completa de contratos e serviços contratados junto a prestadores.
 
 @function PerfilCliente - Componente funcional React.
-  @hook useState - Controla os dados do perfil, permissão de edição, mensagens de erro e feedback de sucesso.
-  @hook useEffect - Garante o redirecionamento caso o usuário não esteja autenticado.
+  @hook useState - Controla os dados do perfil, lista de contratos, mensagens de erro e feedback de sucesso.
+  @hook useEffect - Garante o redirecionamento caso não autenticado e sincroniza contratos do cliente.
+  @hook useNavigate - Fornece navegação programática no React Router.
 
+@function formatarPreco - Converte um número para formato monetário em reais (BRL).
+  @param {number} valor - Valor numérico a ser formatado.
+  @returns {string} String formatada em reais.
 @function handleInputChange - Atualiza os campos de dados gerais permitidos para alteração.
   @param {React.ChangeEvent<HTMLInputElement>} e - Evento de alteração de campo.
-@function handleEnderecoChange - Atualiza os campos da estrutura de endereço aninhada.
+@function handleEnderecoChange - Atualiza os campos de endereço e dispara dinamicamente a busca no ViaCEP ao atingir 8 dígitos.
   @param {React.ChangeEvent<HTMLInputElement>} e - Evento de alteração de campo de endereço.
-@function handleBuscarCep - Realiza a consulta ao ViaCEP para preencher automaticamente os dados de endereço na edição.
+@function handleBuscarCep - Realiza a consulta ao ViaCEP para preencher automaticamente os dados de endereço.
+  @param {string} [cepInformado] - CEP numérico a consultar.
   @returns {Promise<void>}
 @function handleSalvarPerfil - Envia as alterações permitidas para atualização através do serviço api.updatePerfilCliente.
   @param {React.FormEvent<HTMLFormElement>} e - Evento de submissão do formulário.
   @returns {Promise<void>}
 @function handleTornarPrestador - Habilita e inicializa o perfil de prestador para a conta atual.
   @param {React.FormEvent<HTMLFormElement>} e - Evento de submissão do formulário de prestador.
+  @returns {Promise<void>}
+@function handleAlterarStatusContrato - Permite ao cliente cancelar ou concluir uma relação contratual.
+  @param {string} contratoId - ID do contrato a ser alterado.
+  @param {string} novoStatus - Novo status desejado.
   @returns {Promise<void>}
 
 --- [Documentação IA] ---
@@ -65,16 +74,53 @@ export default function PerfilCliente() {
     registroEspecificoProfissao: ''
   })
 
+  // Estados do sistema de contratos
+  const [contratosCliente, setContratosCliente] = useState([])
+  const [carregandoContratos, setCarregandoContratos] = useState(true)
+  const [atualizandoContratoId, setAtualizandoContratoId] = useState(null)
+
   const [mensagemSucesso, setMensagemSucesso] = useState('')
   const [mensagemErro, setMensagemErro] = useState('')
   const [salvando, setSalvando] = useState(false)
   const [buscandoCep, setBuscandoCep] = useState(false)
 
   useEffect(() => {
-    if (!api.getCurrentUser()) {
+    const user = api.getCurrentUser()
+    if (!user) {
       navigate('/login')
+      return
+    }
+
+    async function carregarContratos() {
+      try {
+        setCarregandoContratos(true)
+        const lista = await api.getContratosByClienteId(user.id)
+        setContratosCliente(lista)
+      } catch {
+        // Ignora ou mantém lista vazia
+      } finally {
+        setCarregandoContratos(false)
+      }
+    }
+
+    carregarContratos()
+
+    const aoMudarContratos = () => {
+      carregarContratos()
+    }
+
+    window.addEventListener('contracts-change', aoMudarContratos)
+    return () => {
+      window.removeEventListener('contracts-change', aoMudarContratos)
     }
   }, [navigate])
+
+  const formatarPreco = (valor) => {
+    return Number(valor || 0).toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    })
+  }
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
@@ -86,6 +132,27 @@ export default function PerfilCliente() {
 
   const handleEnderecoChange = (e) => {
     const { name, value } = e.target
+
+    if (name === 'cep') {
+      const digitos = value.replace(/\D/g, '').slice(0, 8)
+      const formatado = digitos.length > 5 ? `${digitos.slice(0, 5)}-${digitos.slice(5)}` : digitos
+
+      setFormData(prev => ({
+        ...prev,
+        endereco: {
+          ...prev.endereco,
+          cep: formatado
+        }
+      }))
+
+      if (digitos.length === 8) {
+        handleBuscarCep(digitos)
+      } else {
+        setMensagemErro('')
+      }
+      return
+    }
+
     setFormData(prev => ({
       ...prev,
       endereco: {
@@ -95,8 +162,8 @@ export default function PerfilCliente() {
     }))
   }
 
-  const handleBuscarCep = async () => {
-    const limpo = formData.endereco.cep.replace(/\D/g, '')
+  const handleBuscarCep = async (cepInformado) => {
+    const limpo = String(cepInformado || formData.endereco.cep).replace(/\D/g, '')
     if (limpo.length !== 8) {
       setMensagemErro('Informe um CEP válido com 8 dígitos.')
       return
@@ -111,16 +178,34 @@ export default function PerfilCliente() {
         endereco: {
           ...prev.endereco,
           cep: dados.cep || limpo,
-          estado: dados.estado,
-          cidade: dados.cidade,
-          bairro: dados.bairro,
-          rua: dados.rua
+          estado: dados.estado || '',
+          cidade: dados.cidade || '',
+          bairro: dados.bairro || '',
+          rua: dados.rua || ''
         }
       }))
     } catch (err) {
       setMensagemErro(err.message || 'Erro ao consultar o CEP no ViaCEP.')
     } finally {
       setBuscandoCep(false)
+    }
+  }
+
+  const handleAlterarStatusContrato = async (contratoId, novoStatus) => {
+    try {
+      setAtualizandoContratoId(contratoId)
+      setMensagemErro('')
+      setMensagemSucesso('')
+      await api.updateStatusContrato(contratoId, novoStatus)
+      if (usuario) {
+        const lista = await api.getContratosByClienteId(usuario.id)
+        setContratosCliente(lista)
+      }
+      setMensagemSucesso(`Status do contrato atualizado com sucesso para "${novoStatus}".`)
+    } catch (err) {
+      setMensagemErro(err.message || 'Erro ao atualizar o contrato.')
+    } finally {
+      setAtualizandoContratoId(null)
     }
   }
 
@@ -284,30 +369,22 @@ export default function PerfilCliente() {
             <legend>Endereço Residencial (Editável)</legend>
 
             <div className="form-row cep-lookup-row">
-              <div className="form-group">
-                <label htmlFor="editCep">CEP</label>
-                <div className="input-with-button">
-                  <input
-                    id="editCep"
-                    type="text"
-                    name="cep"
-                    value={formData.endereco.cep}
-                    onChange={handleEnderecoChange}
-                    maxLength={9}
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={handleBuscarCep}
-                    className="btn-secondary"
-                    disabled={buscandoCep}
-                  >
-                    {buscandoCep ? 'Buscando...' : 'ViaCEP'}
-                  </button>
-                </div>
+              <div className="form-group flex-2">
+                <label htmlFor="editCep">
+                  CEP {buscandoCep && <span className="cep-inline-loading">(Buscando endereço...)</span>}
+                </label>
+                <input
+                  id="editCep"
+                  type="text"
+                  name="cep"
+                  value={formData.endereco.cep}
+                  onChange={handleEnderecoChange}
+                  maxLength={9}
+                  required
+                />
               </div>
 
-              <div className="form-group">
+              <div className="form-group flex-1">
                 <label htmlFor="editEstado">Estado (UF)</label>
                 <input
                   id="editEstado"
@@ -380,6 +457,115 @@ export default function PerfilCliente() {
             </button>
           </div>
         </form>
+
+        {/* Seção de Contratos e Relações de Serviço do Cliente */}
+        <section className="contracts-section">
+          <div className="section-header-contracts">
+            <div>
+              <h3>Meus Contratos de Serviços</h3>
+              <p className="contracts-subtitle">
+                Acompanhe o andamento das relações de serviços contratadas com os prestadores.
+              </p>
+            </div>
+            <span className="badge-counter">{contratosCliente.length} contrato(s)</span>
+          </div>
+
+          {carregandoContratos ? (
+            <p className="loading-message">Carregando seus contratos...</p>
+          ) : contratosCliente.length === 0 ? (
+            <div className="empty-contracts-card">
+              <p>Você ainda não formalizou nenhum contrato de serviço.</p>
+              <Link to="/" className="btn-secondary">Explorar Catálogo de Serviços</Link>
+            </div>
+          ) : (
+            <div className="contracts-list">
+              {contratosCliente.map((contrato) => (
+                <div key={contrato.id} className="contract-card">
+                  <div className="contract-card-header">
+                    <div>
+                      <span className="contract-code">Protocolo: {contrato.id}</span>
+                      <h4 className="contract-title">{contrato.servicoNome}</h4>
+                    </div>
+                    <span className={`badge-contract-status status-${contrato.status.toLowerCase().replace(/\s+/g, '-')}`}>
+                      {contrato.status}
+                    </span>
+                  </div>
+
+                  <div className="contract-card-grid">
+                    <div className="contract-info-item">
+                      <span className="info-label">Prestador:</span>
+                      <strong className="info-value">{contrato.prestadorNome}</strong>
+                    </div>
+
+                    <div className="contract-info-item">
+                      <span className="info-label">Contato do Prestador:</span>
+                      <span className="info-value">{contrato.prestadorTelefone}</span>
+                    </div>
+
+                    <div className="contract-info-item">
+                      <span className="info-label">Valor Acordado:</span>
+                      <strong className="info-value price-text">{formatarPreco(contrato.preco)}</strong>
+                    </div>
+
+                    <div className="contract-info-item">
+                      <span className="info-label">Data Agendada:</span>
+                      <span className="info-value">{contrato.dataAgendamento || contrato.dataContratacao}</span>
+                    </div>
+
+                    <div className="contract-info-item full-width">
+                      <span className="info-label">Endereço do Atendimento:</span>
+                      <span className="info-value">
+                        {contrato.clienteEndereco?.rua ? (
+                          `${contrato.clienteEndereco.rua}, ${contrato.clienteEndereco.numero || 'S/N'} - ${contrato.clienteEndereco.bairro}, ${contrato.clienteEndereco.cidade}/${contrato.clienteEndereco.estado}`
+                        ) : 'Endereço residencial cadastrado'}
+                      </span>
+                    </div>
+
+                    {contrato.observacoes && (
+                      <div className="contract-info-item full-width">
+                        <span className="info-label">Observações da Solicitação:</span>
+                        <p className="contract-notes">{contrato.observacoes}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="contract-card-actions">
+                    <a
+                      href={`https://api.whatsapp.com/send?phone=${String(contrato.prestadorTelefone || '').replace(/\D/g, '')}&text=Olá%20${encodeURIComponent(contrato.prestadorNome)},%20estou%20entrando%20em%20contato%20sobre%20o%20contrato%20${contrato.id}%20do%20serviço%20${encodeURIComponent(contrato.servicoNome)}.`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-whatsapp-sm"
+                    >
+                      💬 Falar no WhatsApp
+                    </a>
+
+                    {contrato.status === 'Em Andamento' && (
+                      <button
+                        type="button"
+                        onClick={() => handleAlterarStatusContrato(contrato.id, 'Concluído')}
+                        disabled={atualizandoContratoId === contrato.id}
+                        className="btn-success-sm"
+                      >
+                        ✓ Confirmar Conclusão
+                      </button>
+                    )}
+
+                    {(contrato.status === 'Pendente' || contrato.status === 'Em Andamento') && (
+                      <button
+                        type="button"
+                        onClick={() => handleAlterarStatusContrato(contrato.id, 'Cancelado')}
+                        disabled={atualizandoContratoId === contrato.id}
+                        className="btn-danger-sm"
+                      >
+                        ✕ Cancelar Contrato
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         {/* Seção sobre Perfil de Prestador */}
         <div className="provider-status-section">

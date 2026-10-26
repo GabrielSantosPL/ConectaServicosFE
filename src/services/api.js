@@ -10,11 +10,14 @@
 
 @fileoverview Camada de serviços simulados (Mock API) para o frontend Conecta Serviços.
 @description Simula a persistência e operações de backend utilizando o LocalStorage do navegador.
-             Fornece métodos assíncronos baseados em Promises para facilitar a futura migração para um backend real.
+             Fornece métodos assíncronos baseados em Promises para gerenciar usuários, serviços,
+             endereços via ViaCEP e o sistema de contratos que estabelece a relação de serviço
+             entre clientes e prestadores.
 
 @constant {string} STORAGE_USERS_KEY - Chave do LocalStorage para a lista de usuários.
 @constant {string} STORAGE_SERVICES_KEY - Chave do LocalStorage para a lista de serviços.
 @constant {string} STORAGE_SESSION_KEY - Chave do LocalStorage para a sessão do usuário logado.
+@constant {string} STORAGE_CONTRACTS_KEY - Chave do LocalStorage para os contratos/relações de serviço.
 
 @function initStorage - Inicializa os dados pré-cadastrados no LocalStorage caso ainda não existam.
 @function login - Autentica um usuário por email e senha.
@@ -58,6 +61,24 @@
 @function consultarCep - Realiza busca de endereço utilizando a API pública ViaCEP.
   @param {string} cep - CEP numérico a ser consultado.
   @returns {Promise<Object>} Dados do endereço retornados pela API ViaCEP.
+@function getContratos - Obtém a lista completa de contratos de serviço registrados.
+  @returns {Promise<Array<Object>>} Lista de contratos.
+@function getContratosByClienteId - Retorna todos os contratos vinculados a um cliente específico.
+  @param {string|number} clienteId - Identificador do cliente.
+  @returns {Promise<Array<Object>>} Lista de contratos do cliente.
+@function getContratosByPrestadorId - Retorna todos os contratos recebidos por um prestador específico.
+  @param {string|number} prestadorId - Identificador do prestador.
+  @returns {Promise<Array<Object>>} Lista de contratos do prestador.
+@function getContratoById - Busca os detalhes de um contrato específico pelo ID.
+  @param {string|number} id - Identificador do contrato.
+  @returns {Promise<Object>} Contrato encontrado.
+@function createContrato - Registra uma nova relação contratual de serviço entre cliente e prestador.
+  @param {Object} dadosContrato - Dados do contrato (serviço, datas, observações e envolvidos).
+  @returns {Promise<Object>} Contrato criado com status 'Pendente'.
+@function updateStatusContrato - Atualiza o status de um contrato ('Pendente', 'Em Andamento', 'Concluído', 'Cancelado').
+  @param {string|number} id - Identificador do contrato.
+  @param {string} novoStatus - Novo status atribuído ao contrato.
+  @returns {Promise<Object>} Contrato atualizado.
 
 --- [Documentação IA] ---
 
@@ -66,6 +87,7 @@
 const STORAGE_USERS_KEY = 'conecta_servicos_usuarios';
 const STORAGE_SERVICES_KEY = 'conecta_servicos_itens';
 const STORAGE_SESSION_KEY = 'conecta_servicos_sessao';
+const STORAGE_CONTRACTS_KEY = 'conecta_servicos_contratos';
 
 const SEED_USERS = [
   {
@@ -163,12 +185,44 @@ const SEED_SERVICES = [
   }
 ];
 
+const SEED_CONTRACTS = [
+  {
+    id: 'cont-1',
+    servicoId: 'serv-1',
+    servicoNome: 'Instalação e Manutenção de Redes Elétricas',
+    clienteId: 'user-1',
+    clienteNome: 'Maria da Silva',
+    clienteTelefone: '(11) 98765-4321',
+    clienteEmail: 'cliente@teste.com',
+    clienteEndereco: {
+      rua: 'Praça da Sé',
+      numero: '100',
+      bairro: 'Sé',
+      cidade: 'São Paulo',
+      estado: 'SP',
+      cep: '01001-000'
+    },
+    prestadorId: 'user-2',
+    prestadorNome: 'Carlos Manutenção Elétrica',
+    prestadorTelefone: '(11) 91234-5678',
+    prestadorEmail: 'prestador@teste.com',
+    preco: 180.0,
+    dataContratacao: '2026-03-12',
+    dataAgendamento: '2026-03-20',
+    status: 'Em Andamento',
+    observacoes: 'Revisão geral do quadro de disjuntores da residência.'
+  }
+];
+
 function initStorage() {
   if (!localStorage.getItem(STORAGE_USERS_KEY)) {
     localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(SEED_USERS));
   }
   if (!localStorage.getItem(STORAGE_SERVICES_KEY)) {
     localStorage.setItem(STORAGE_SERVICES_KEY, JSON.stringify(SEED_SERVICES));
+  }
+  if (!localStorage.getItem(STORAGE_CONTRACTS_KEY)) {
+    localStorage.setItem(STORAGE_CONTRACTS_KEY, JSON.stringify(SEED_CONTRACTS));
   }
 }
 
@@ -192,6 +246,16 @@ function getServicesFromStorage() {
 
 function saveServicesToStorage(services) {
   localStorage.setItem(STORAGE_SERVICES_KEY, JSON.stringify(services));
+}
+
+function getContractsFromStorage() {
+  initStorage();
+  const raw = localStorage.getItem(STORAGE_CONTRACTS_KEY);
+  return raw ? JSON.parse(raw) : [];
+}
+
+function saveContractsToStorage(contracts) {
+  localStorage.setItem(STORAGE_CONTRACTS_KEY, JSON.stringify(contracts));
 }
 
 export const api = {
@@ -545,5 +609,112 @@ export const api = {
       bairro: data.bairro,
       rua: data.logradouro
     };
+  },
+
+  getContratos: async () => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const contracts = getContractsFromStorage();
+        resolve(contracts);
+      }, 150);
+    });
+  },
+
+  getContratosByClienteId: async (clienteId) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const contracts = getContractsFromStorage();
+        const doCliente = contracts.filter(c => String(c.clienteId) === String(clienteId));
+        resolve(doCliente);
+      }, 150);
+    });
+  },
+
+  getContratosByPrestadorId: async (prestadorId) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const contracts = getContractsFromStorage();
+        const doPrestador = contracts.filter(c => String(c.prestadorId) === String(prestadorId));
+        resolve(doPrestador);
+      }, 150);
+    });
+  },
+
+  getContratoById: async (id) => {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        const contracts = getContractsFromStorage();
+        const contrato = contracts.find(c => String(c.id) === String(id));
+        if (!contrato) {
+          return reject(new Error('Contrato não encontrado.'));
+        }
+        resolve(contrato);
+      }, 150);
+    });
+  },
+
+  createContrato: async (dadosContrato) => {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        if (!dadosContrato.servicoId || !dadosContrato.clienteId || !dadosContrato.prestadorId) {
+          return reject(new Error('Dados incompletos para estabelecer o contrato de serviço.'));
+        }
+
+        const contracts = getContractsFromStorage();
+        const hoje = new Date().toISOString().split('T')[0];
+
+        const novoContrato = {
+          id: 'cont-' + Date.now(),
+          servicoId: String(dadosContrato.servicoId),
+          servicoNome: dadosContrato.servicoNome || 'Serviço Profissional',
+          clienteId: String(dadosContrato.clienteId),
+          clienteNome: dadosContrato.clienteNome || 'Cliente',
+          clienteTelefone: dadosContrato.clienteTelefone || '',
+          clienteEmail: dadosContrato.clienteEmail || '',
+          clienteEndereco: dadosContrato.clienteEndereco || {},
+          prestadorId: String(dadosContrato.prestadorId),
+          prestadorNome: dadosContrato.prestadorNome || 'Prestador',
+          prestadorTelefone: dadosContrato.prestadorTelefone || '',
+          prestadorEmail: dadosContrato.prestadorEmail || '',
+          preco: parseFloat(dadosContrato.preco) || 0,
+          dataContratacao: hoje,
+          dataAgendamento: dadosContrato.dataAgendamento || hoje,
+          status: 'Pendente',
+          observacoes: dadosContrato.observacoes ? dadosContrato.observacoes.trim() : ''
+        };
+
+        contracts.unshift(novoContrato);
+        saveContractsToStorage(contracts);
+        window.dispatchEvent(new Event('contracts-change'));
+        resolve(novoContrato);
+      }, 200);
+    });
+  },
+
+  updateStatusContrato: async (id, novoStatus) => {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        const statusValidos = ['Pendente', 'Em Andamento', 'Concluído', 'Cancelado'];
+        if (!statusValidos.includes(novoStatus)) {
+          return reject(new Error('Status de contrato inválido.'));
+        }
+
+        const contracts = getContractsFromStorage();
+        const index = contracts.findIndex(c => String(c.id) === String(id));
+        if (index === -1) {
+          return reject(new Error('Contrato não encontrado para atualização.'));
+        }
+
+        contracts[index] = {
+          ...contracts[index],
+          status: novoStatus,
+          dataAtualizacaoStatus: new Date().toISOString()
+        };
+
+        saveContractsToStorage(contracts);
+        window.dispatchEvent(new Event('contracts-change'));
+        resolve(contracts[index]);
+      }, 200);
+    });
   }
 };

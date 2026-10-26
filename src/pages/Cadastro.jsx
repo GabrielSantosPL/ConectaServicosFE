@@ -10,20 +10,21 @@
 
 @fileoverview Página de Cadastro de Cliente Comum do sistema Conecta Serviços.
 @description Permite o cadastro exclusivo de novos clientes comuns com validação e
-             auto-preenchimento automático de endereço via consulta à API pública ViaCEP.
+             auto-preenchimento dinâmico e automático de endereço via consulta à API pública ViaCEP
+             ao digitar o 8º dígito do CEP, sem a necessidade de pressionar botões adicionais.
 
 @function Cadastro - Componente funcional React.
   @hook useState - Gerencia os dados do formulário (cliente e endereço), estados de carregamento, sucesso e erros.
   @hook useNavigate - Permite redirecionar o usuário após a conclusão do cadastro.
 
-@function handleInputChange - Atualiza os campos de texto do formulário no estado local.
+@function handleInputChange - Atualiza os campos de texto gerais do formulário no estado local.
   @param {React.ChangeEvent<HTMLInputElement>} e - Evento de alteração de campo.
-@function handleEnderecoChange - Atualiza especificamente os campos da estrutura de endereço aninhada.
+@function handleEnderecoChange - Atualiza os campos de endereço e aciona dinamicamente a busca no ViaCEP assim que o CEP atinge 8 dígitos.
   @param {React.ChangeEvent<HTMLInputElement>} e - Evento de alteração de campo de endereço.
-@function handleBuscarCep - Dispara a busca automática no ViaCEP quando o usuário sai do campo de CEP ou completa 8 dígitos.
-  @param {string} [cepInformado] - CEP opcional a ser consultado.
+@function handleBuscarCep - Dispara a busca automática no ViaCEP e preenche dinamicamente os campos de logradouro, bairro, cidade e estado.
+  @param {string} cepInformado - CEP numérico a ser consultado.
   @returns {Promise<void>}
-@function handleCepBlur - Valida se o CEP possui 8 dígitos e aciona a busca automática.
+@function handleCepBlur - Valida se o CEP informado está incompleto ao sair do campo.
 @function handleSubmit - Valida os dados informados e cadastra o novo cliente na base simulada.
   @param {React.FormEvent<HTMLFormElement>} e - Evento de submissão do formulário.
   @returns {Promise<void>}
@@ -72,6 +73,27 @@ export default function Cadastro() {
 
   const handleEnderecoChange = (e) => {
     const { name, value } = e.target
+
+    if (name === 'cep') {
+      const digitos = value.replace(/\D/g, '').slice(0, 8)
+      const formatado = digitos.length > 5 ? `${digitos.slice(0, 5)}-${digitos.slice(5)}` : digitos
+
+      setFormData(prev => ({
+        ...prev,
+        endereco: {
+          ...prev.endereco,
+          cep: formatado
+        }
+      }))
+
+      if (digitos.length === 8) {
+        handleBuscarCep(digitos)
+      } else {
+        setErroCep('')
+      }
+      return
+    }
+
     setFormData(prev => ({
       ...prev,
       endereco: {
@@ -97,10 +119,10 @@ export default function Cadastro() {
         endereco: {
           ...prev.endereco,
           cep: dados.cep || limpo,
-          estado: dados.estado,
-          cidade: dados.cidade,
-          bairro: dados.bairro,
-          rua: dados.rua
+          estado: dados.estado || '',
+          cidade: dados.cidade || '',
+          bairro: dados.bairro || '',
+          rua: dados.rua || ''
         }
       }))
     } catch (err) {
@@ -112,8 +134,8 @@ export default function Cadastro() {
 
   const handleCepBlur = () => {
     const limpo = formData.endereco.cep.replace(/\D/g, '')
-    if (limpo.length === 8) {
-      handleBuscarCep(limpo)
+    if (limpo.length > 0 && limpo.length < 8) {
+      setErroCep('O CEP deve conter 8 números.')
     }
   }
 
@@ -272,37 +294,29 @@ export default function Cadastro() {
           <fieldset className="form-section">
             <legend>Endereço Residencial</legend>
             <p className="field-hint">
-              Digite o CEP para preenchimento automático das informações de endereço via ViaCEP.
+              Digite o CEP para preenchimento dinâmico e automático das informações de endereço via ViaCEP.
             </p>
 
             <div className="form-row cep-lookup-row">
-              <div className="form-group">
-                <label htmlFor="cep">CEP *</label>
-                <div className="input-with-button">
-                  <input
-                    id="cep"
-                    type="text"
-                    name="cep"
-                    value={formData.endereco.cep}
-                    onChange={handleEnderecoChange}
-                    onBlur={handleCepBlur}
-                    placeholder="00000-000"
-                    maxLength={9}
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleBuscarCep()}
-                    className="btn-secondary"
-                    disabled={buscandoCep}
-                  >
-                    {buscandoCep ? 'Buscando...' : 'Consultar CEP'}
-                  </button>
-                </div>
+              <div className="form-group flex-2">
+                <label htmlFor="cep">
+                  CEP * {buscandoCep && <span className="cep-inline-loading">(Buscando endereço...)</span>}
+                </label>
+                <input
+                  id="cep"
+                  type="text"
+                  name="cep"
+                  value={formData.endereco.cep}
+                  onChange={handleEnderecoChange}
+                  onBlur={handleCepBlur}
+                  placeholder="00000-000"
+                  maxLength={9}
+                  required
+                />
                 {erroCep && <span className="field-error-text">{erroCep}</span>}
               </div>
 
-              <div className="form-group">
+              <div className="form-group flex-1">
                 <label htmlFor="estado">Estado (UF) *</label>
                 <input
                   id="estado"

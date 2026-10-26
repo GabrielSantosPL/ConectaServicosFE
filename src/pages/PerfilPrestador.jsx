@@ -10,15 +10,21 @@
 
 @fileoverview Página de Perfil do Prestador de Serviços do sistema Conecta Serviços.
 @description Permite a visualização e edição de dados do prestador de serviços (respeitando
-             as regras de imutabilidade de Nota e Status de Verificação), bem como a criação
-             e edição completa de serviços oferecidos pelo prestador.
+             as regras de imutabilidade de Nota e Status de Verificação), o gerenciamento
+             de contratos/ordens de serviço solicitadas por clientes e a criação e edição
+             de serviços oferecidos no catálogo do marketplace.
 
 @function PerfilPrestador - Componente funcional React.
   @hook useState - Controla os dados cadastrais do prestador, lista de serviços próprios,
-                    estados de edição/criação de serviço, mensagens e flags de carregamento.
-  @hook useEffect - Inicializa a página com o usuário logado e carrega seus serviços cadastrados.
+                    lista de contratos recebidos, filtros, mensagens e flags de carregamento.
+  @hook useEffect - Inicializa a página com o usuário logado, carrega serviços e contratos recebidos.
   @hook useNavigate - Redireciona o usuário caso não esteja autenticado.
 
+@function formatarPreco - Converte um número para formato monetário em reais (BRL).
+  @param {number} valor - Valor numérico a ser formatado.
+  @returns {string} String formatada em reais.
+@function handlePrestadorChange - Atualiza os campos de texto do perfil profissional.
+  @param {React.ChangeEvent<HTMLInputElement>} e - Evento de alteração de campo.
 @function handlePrestadorSubmit - Atualiza os dados permitidos do perfil de prestador via api.updatePerfilPrestador.
   @param {React.FormEvent<HTMLFormElement>} e - Evento de submissão do perfil.
   @returns {Promise<void>}
@@ -28,6 +34,10 @@
 @function handleCancelarFormServico - Reseta e oculta o formulário de serviço.
 @function handleSalvarServico - Processa a criação ou alteração de um serviço via api.createServico ou api.updateServico.
   @param {React.FormEvent<HTMLFormElement>} e - Evento de submissão do formulário de serviço.
+  @returns {Promise<void>}
+@function handleAlterarStatusContrato - Atualiza o status de um contrato recebido ('Em Andamento', 'Concluído', 'Cancelado').
+  @param {string} contratoId - Identificador do contrato.
+  @param {string} novoStatus - Novo status atribuído.
   @returns {Promise<void>}
 
 --- [Documentação IA] ---
@@ -42,6 +52,9 @@ export default function PerfilPrestador() {
   const navigate = useNavigate()
   const [usuario, setUsuario] = useState(() => api.getCurrentUser())
   const [servicosPrestador, setServicosPrestador] = useState([])
+  const [contratosPrestador, setContratosPrestador] = useState([])
+  const [filtroStatusContrato, setFiltroStatusContrato] = useState('Todos')
+  const [atualizandoContratoId, setAtualizandoContratoId] = useState(null)
   const [carregando, setCarregando] = useState(true)
 
   // Formulário de perfil do prestador
@@ -86,14 +99,18 @@ export default function PerfilPrestador() {
       return
     }
 
-    async function carregarServicosPrestador() {
+    async function carregarDadosPrestador() {
       if (user.perfilPrestador) {
         try {
           setCarregando(true)
-          const servicos = await api.getServicosByPrestadorId(user.id)
+          const [servicos, contratos] = await Promise.all([
+            api.getServicosByPrestadorId(user.id),
+            api.getContratosByPrestadorId(user.id)
+          ])
           setServicosPrestador(servicos)
+          setContratosPrestador(contratos)
         } catch {
-          setMensagemErro('Erro ao carregar serviços do prestador.')
+          setMensagemErro('Erro ao carregar dados do prestador.')
         } finally {
           setCarregando(false)
         }
@@ -102,8 +119,45 @@ export default function PerfilPrestador() {
       }
     }
 
-    carregarServicosPrestador()
+    carregarDadosPrestador()
+
+    const aoMudarContratos = async () => {
+      if (user.perfilPrestador) {
+        const contratos = await api.getContratosByPrestadorId(user.id)
+        setContratosPrestador(contratos)
+      }
+    }
+
+    window.addEventListener('contracts-change', aoMudarContratos)
+    return () => {
+      window.removeEventListener('contracts-change', aoMudarContratos)
+    }
   }, [navigate])
+
+  const formatarPreco = (valor) => {
+    return Number(valor || 0).toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    })
+  }
+
+  const handleAlterarStatusContrato = async (contratoId, novoStatus) => {
+    try {
+      setAtualizandoContratoId(contratoId)
+      setMensagemErro('')
+      setMensagemSucesso('')
+      await api.updateStatusContrato(contratoId, novoStatus)
+      if (usuario) {
+        const contratos = await api.getContratosByPrestadorId(usuario.id)
+        setContratosPrestador(contratos)
+      }
+      setMensagemSucesso(`Status do contrato atualizado com sucesso para "${novoStatus}".`)
+    } catch (err) {
+      setMensagemErro(err.message || 'Erro ao atualizar status do contrato.')
+    } finally {
+      setAtualizandoContratoId(null)
+    }
+  }
 
   const handlePrestadorChange = (e) => {
     const { name, value } = e.target
@@ -249,6 +303,11 @@ export default function PerfilPrestador() {
     )
   }
 
+  const contratosFiltrados = contratosPrestador.filter(contrato => {
+    if (filtroStatusContrato === 'Todos') return true
+    return contrato.status === filtroStatusContrato
+  })
+
   return (
     <div className="page-container">
       <div className="card profile-card">
@@ -378,6 +437,172 @@ export default function PerfilPrestador() {
             </button>
           </div>
         </form>
+
+        <hr className="divider" />
+
+        {/* Gestão de Contratos e Ordens de Serviço Recebidas */}
+        <section className="contracts-management-section">
+          <div className="management-header">
+            <div>
+              <h3>Contratos e Ordens de Serviço Recebidas</h3>
+              <p>Gerencie as solicitações e contratos de serviço firmados diretamente com seus clientes.</p>
+            </div>
+            <div className="contracts-stats-badges">
+              <span className="badge-stat-item">
+                Pendentes: <strong>{contratosPrestador.filter(c => c.status === 'Pendente').length}</strong>
+              </span>
+              <span className="badge-stat-item">
+                Em Andamento: <strong>{contratosPrestador.filter(c => c.status === 'Em Andamento').length}</strong>
+              </span>
+              <span className="badge-stat-item">
+                Concluídos: <strong>{contratosPrestador.filter(c => c.status === 'Concluído').length}</strong>
+              </span>
+            </div>
+          </div>
+
+          {/* Filtros de Status */}
+          <div className="contract-filter-tabs">
+            {['Todos', 'Pendente', 'Em Andamento', 'Concluído', 'Cancelado'].map(statusTab => (
+              <button
+                key={statusTab}
+                type="button"
+                className={`tab-filter-btn ${filtroStatusContrato === statusTab ? 'active' : ''}`}
+                onClick={() => setFiltroStatusContrato(statusTab)}
+              >
+                {statusTab}
+              </button>
+            ))}
+          </div>
+
+          {contratosFiltrados.length === 0 ? (
+            <div className="empty-contracts-card">
+              <p>
+                {filtroStatusContrato === 'Todos'
+                  ? 'Nenhum contrato de serviço recebido até o momento.'
+                  : `Nenhum contrato com status "${filtroStatusContrato}".`}
+              </p>
+            </div>
+          ) : (
+            <div className="contracts-list">
+              {contratosFiltrados.map((contrato) => (
+                <div key={contrato.id} className="contract-card provider-contract-card">
+                  <div className="contract-card-header">
+                    <div>
+                      <span className="contract-code">Protocolo: {contrato.id}</span>
+                      <h4 className="contract-title">{contrato.servicoNome}</h4>
+                    </div>
+                    <span className={`badge-contract-status status-${contrato.status.toLowerCase().replace(/\s+/g, '-')}`}>
+                      {contrato.status}
+                    </span>
+                  </div>
+
+                  <div className="contract-card-grid">
+                    <div className="contract-info-item">
+                      <span className="info-label">Cliente Solicitante:</span>
+                      <strong className="info-value">{contrato.clienteNome}</strong>
+                    </div>
+
+                    <div className="contract-info-item">
+                      <span className="info-label">Telefone / WhatsApp:</span>
+                      <span className="info-value">{contrato.clienteTelefone}</span>
+                    </div>
+
+                    <div className="contract-info-item">
+                      <span className="info-label">E-mail:</span>
+                      <span className="info-value">{contrato.clienteEmail || 'Não informado'}</span>
+                    </div>
+
+                    <div className="contract-info-item">
+                      <span className="info-label">Valor do Contrato:</span>
+                      <strong className="info-value price-text">{formatarPreco(contrato.preco)}</strong>
+                    </div>
+
+                    <div className="contract-info-item">
+                      <span className="info-label">Data de Solicitação:</span>
+                      <span className="info-value">{contrato.dataContratacao}</span>
+                    </div>
+
+                    <div className="contract-info-item">
+                      <span className="info-label">Data Preferencial de Atendimento:</span>
+                      <strong className="info-value text-highlight">
+                        {contrato.dataAgendamento || contrato.dataContratacao}
+                      </strong>
+                    </div>
+
+                    <div className="contract-info-item full-width">
+                      <span className="info-label">Endereço de Realização do Serviço:</span>
+                      <span className="info-value">
+                        {contrato.clienteEndereco?.rua ? (
+                          `${contrato.clienteEndereco.rua}, ${contrato.clienteEndereco.numero || 'S/N'} - ${contrato.clienteEndereco.bairro}, ${contrato.clienteEndereco.cidade}/${contrato.clienteEndereco.estado} (CEP: ${contrato.clienteEndereco.cep || 'N/A'})`
+                        ) : 'Endereço a combinar com o cliente'}
+                      </span>
+                    </div>
+
+                    {contrato.observacoes && (
+                      <div className="contract-info-item full-width">
+                        <span className="info-label">Descrição e Observações do Cliente:</span>
+                        <p className="contract-notes">{contrato.observacoes}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="contract-card-actions">
+                    <a
+                      href={`https://api.whatsapp.com/send?phone=${String(contrato.clienteTelefone || '').replace(/\D/g, '')}&text=Olá%20${encodeURIComponent(contrato.clienteNome)},%20sou%20${encodeURIComponent(usuario.nome)}%20referente%20ao%20contrato%20${contrato.id}%20do%20serviço%20${encodeURIComponent(contrato.servicoNome)}.`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-whatsapp-sm"
+                    >
+                      💬 Falar com Cliente no WhatsApp
+                    </a>
+
+                    {contrato.status === 'Pendente' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleAlterarStatusContrato(contrato.id, 'Em Andamento')}
+                          disabled={atualizandoContratoId === contrato.id}
+                          className="btn-success-sm"
+                        >
+                          ✓ Aceitar e Iniciar Serviço
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAlterarStatusContrato(contrato.id, 'Cancelado')}
+                          disabled={atualizandoContratoId === contrato.id}
+                          className="btn-danger-sm"
+                        >
+                          ✕ Recusar
+                        </button>
+                      </>
+                    )}
+
+                    {contrato.status === 'Em Andamento' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleAlterarStatusContrato(contrato.id, 'Concluído')}
+                          disabled={atualizandoContratoId === contrato.id}
+                          className="btn-success-sm"
+                        >
+                          ✓ Finalizar Atendimento
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAlterarStatusContrato(contrato.id, 'Cancelado')}
+                          disabled={atualizandoContratoId === contrato.id}
+                          className="btn-danger-sm"
+                        >
+                          ✕ Cancelar Atendimento
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <hr className="divider" />
 
